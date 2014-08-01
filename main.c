@@ -31,8 +31,8 @@ float oc_voltage_gradient = 0.076; // Volts
 
 /*********** CHANGEABLE PARAMETERS ***********/
 float c_deg_lim = 0.8;
-float corrosion_time_step = 0; // [hours]
-float degradation_time_step = 0; // [hours]
+float corrosion_time_step = 0.016667; // [hours]
+float degradation_time_step = 0.016667; // [hours]
 
 /******* PARAMETERS FOR I_gas CALCULATION *******/
 
@@ -43,31 +43,36 @@ float temperature_coefficient = 0.06; // 1/Kelvin
 
 
 /*******  GLOBAL VARIABLES USED IN CODE *******/
-float battery_voltage, battery_temperature, battery_current, ambient_temperature;
-float soc_min, soc_max, soc, soc_limit, current_time_step; // in hours
-float f_strat, z_w, time_since_last_charge;
-float corrosion_temperature_0; // Corrosion reference temperature in K
-float n_bad_charges;
-float c_deg, c_corr, c_remaining;
-float current_factor, f_soc, f_plus, f_minus, f_acid;
+float soc_limit = 0.9;
 
-float current_vector_size = 240;
-int current_vector_pos = 0;
-float *current_vector;
+// Measurement Variables
+float battery_voltage, battery_temperature, battery_current, ambient_temperature, soc;
+float current_time_step = 0.25; // In Seconds
+float *current_vector; float current_vector_size = 240; int current_vector_pos = 0;
 int soc_status[2] = {0,0}; // Helps us determine changes in battery charge state
+
+// C_deg Variables
+float c_deg, current_factor, f_soc, f_plus, f_minus, f_acid, soc_min, soc_max,
+		f_strat, z_w, time_since_last_charge, n_bad_charges;
+
+
+// C_corr Variables
+float corrosion_temperature_0 = 298; // Corrosion reference temperature in K
+float dw, dw_lim; // Initial value for corrosion layer growth
+float c_corr;
+
+// C_remaining Variables
+float c_remaining;
 float c_remaining_history[2] = {1.75,1.75};
 
-float dw, dw_lim; // Inicital value for corrosion layer growth
 
+// Arduino Variables
 const int chipSelect = 53;
-
-// TODO: Organize global variables by section (deg, corr, etc)
-// TODO: Review function calls and eliminate unecessary parameters
-// TODO: Review zero-current policy
-
 Timer t;
 File dataFile;
 
+
+// TODO: Review function calls and eliminate unecessary parameters
 float integrate(float *y, float time_step, int sample_size) {
 	// Integrates using 3/8 Simpson method
 	float sum=0,h,temp;
@@ -99,9 +104,12 @@ float measure_battery_current() {
 		aggregate_data[i] = analogRead(A3);
 		data_sum += aggregate_data[i];
 	}
+
 	float current_value = data_sum/100;
-	
 	current_value = (current_offset - current_value * (5.00 / 1023.00))/current_constant;
+	if (fabs(current_value) < 0.1) current_value = 0;
+
+	log_data();
 	return current_value;
 }
 
@@ -192,7 +200,6 @@ void calculate_soc(float *current_values, float current_time_step, int sample_si
 			if (soc < soc_min) soc_min = soc;
 		}
 	}
-	log_data();
 }
 
 /* Dufo-López et al. (2014) / Section 4.3.1.1 / Equation #11 */
@@ -356,61 +363,109 @@ void take_measurements(void *context) {
 		current_vector[current_vector_pos] = battery_current;
 		current_vector_pos++;
 	}
-	
-	Serial.println("TAKING MEASUREMENTS");
-	Serial.println(battery_voltage);
-	Serial.println(battery_current);
-	Serial.println(battery_temperature);
-	Serial.println(ambient_temperature);
-	Serial.println(soc);
 }
 		
+float read_value() {
+	char buffer[10]; 
+	int buffer_pos = 0;
+	char read_data;
+	float final_value;
+
+	read_data = dataFile.read();
+
+	while ( (read_data != ',') && (read_data != '\n') ) {
+		if (read_data == ' ');
+		else {
+			buffer[buffer_pos] = read_data;
+			buffer_pos++;
+		}
+		read_data = dataFile.read();
+	}
+	
+	final_value = atof(buffer);
+	return final_value;
+}
+
+int rewind_line() {
+	int number_columns = 0;
+
+	long dataPos = dataFile.position();
+	dataPos -= 2;
+	dataFile.seek(dataPos);
+	char read_data = dataFile.read();
+
+	while(read_data != '\n') {
+		dataPos -= 1;
+		dataFile.seek(dataPos);
+		if (read_data == ',') number_columns++;
+
+		read_data = dataFile.read();
+	}
+	return (number_columns + 1);
+}
+
 /* TODO: DEVELOP INITIAL SOC MEASUREMENT */
 /* TODO: GATHER DATA BEFORE RESET FROM TEXT FILE */
 void initial_setup() {
 	delay(5000);
-	battery_voltage = measure_battery_voltage();
-	battery_temperature = measure_battery_temperature();
-	ambient_temperature = measure_ambient_temperature();
-	battery_current = measure_battery_current();
-	n_bad_charges = 0;
 
-	soc_min = 1; soc_max = 0; soc_limit = 0.9; current_time_step = 0.25;
+	n_bad_charges = 0; soc_min = 1; soc_max = 0;
 	f_strat = 0; z_w = 0; time_since_last_charge = 0;
-	corrosion_temperature_0 = 298;
-	corrosion_time_step = 0.016667; // [hours]
-	degradation_time_step = 0.016667; // [hours]
-
 
 	current_vector = (float *)malloc(current_vector_size * sizeof(float));
 
 	/* Bindner et al. (2005) / Section 5.3.7.2 / Equation #32 */
 	dw_lim = float_lifetime * calculate_k_s(nominal_cell_voltage);
 
-	// TODO: Gather previous data from SD card
-	/*
-	long dataPos = dataFile.position();
-	dataFile.seek(dataPos-83);
-	fscanf(dataFile, " %f,  %f,  %f,  %f,  %f, %d,  %f,  %f,  %f,  %f,  %f", &battery_voltage, &battery_current, &soc, &battery_temperature, &ambient_temperature, &n_bad_charges, &f_acid, &z_w, &c_deg, &c_corr, &c_remaining);
-	char buffer[11]; int buffer_pos = 0;
-	char read_byte; float value;
-	while ((read_byte = dataFile.read() > 0)) {
-		if (read_byte != ',' || read_byte != ' ') {
-			buffer[buffer_pos] = read_byte;
-		}
-		if (read_byte == ',') {
-			value = atof(buffer);
-			buffer_pos = 0;
-		}
-
-	}
-
-	dataFile.println("");*/
-	
-
 	// Equation obtained from linear regression from data relating Voltage and SOC
+	battery_voltage = measure_battery_voltage();
 	soc = 0.6839*battery_voltage - 7.9077;
 	if (soc > 1) soc = 1;
+	
+	// Gathering previous data from SD card
+	if (dataFile.position() > 5) { // Verifies if data file actually has any data, 5 is arbitrary
+		Serial.println("Reading Previous Values");	
+		int column_read_count = 0;
+		float read_values[100];
+
+		int number_columns = rewind_line();
+		Serial.println(number_columns);
+
+		while (column_read_count < number_columns) {
+			read_values[column_read_count] = read_value();
+			Serial.println(read_values[column_read_count]);
+			column_read_count++;
+		}
+		
+		// Set variables to correspondent read values
+		battery_voltage = read_values[0];
+		battery_current = read_values[1];
+		soc = read_values[2];
+		battery_temperature = read_values[3];
+		ambient_temperature = read_values[4];
+		current_factor = read_values[5];
+		f_soc = read_values[6];
+		f_plus = read_values[7];
+		f_minus = read_values[8];
+		f_acid = read_values[9];
+		soc_min = read_values[10];
+		soc_max = read_values[11];
+		f_strat = read_values[12];
+		z_w = read_values[13];
+		time_since_last_charge = read_values[14];
+		n_bad_charges = read_values[15];
+		dw = read_values[16];
+		c_deg = read_values[17];
+		c_corr = read_values[18];
+		c_remaining = read_values[19];
+
+
+		Serial.println("Finish Reading");
+	}
+
+	battery_temperature = measure_battery_temperature();
+	ambient_temperature = measure_ambient_temperature();
+	battery_current = measure_battery_current();
 }
 
 
@@ -456,11 +511,29 @@ void log_data() {
 	dataString += String(',');
 	dataString += dtostrf(ambient_temperature, 7, 3, buffer);
 	dataString += String(',');
-	dataString += dtostrf(n_bad_charges, 7, 3, buffer);
+	dataString += dtostrf(current_factor, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(f_soc, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(f_plus, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(f_minus, 7, 3, buffer);
 	dataString += String(',');
 	dataString += dtostrf(f_acid, 7, 3, buffer);
 	dataString += String(',');
-	dataString += dtostrf(z_w, 7, 3, buffer);	
+	dataString += dtostrf(soc_min, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(soc_max, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(f_strat, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(z_w, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(time_since_last_charge, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(n_bad_charges, 7, 3, buffer);
+	dataString += String(',');
+	dataString += dtostrf(dw, 7, 3, buffer);
 	dataString += String(',');
 	dataString += dtostrf(c_deg, 7, 3, buffer);
 	dataString += String(',');
