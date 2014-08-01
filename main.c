@@ -29,8 +29,8 @@ float oc_voltage_gradient = 0.076; // Volts
 
 /*********** CHANGEABLE PARAMETERS ***********/
 float c_deg_lim = 0.8;
-float corrosion_time_step = 0; // [hours]
-float degradation_time_step = 0; // [hours]
+float corrosion_time_step = 0.016667; // [hours]
+float degradation_time_step = 0.016667; // [hours]
 
 /******* PARAMETERS FOR I_gas CALCULATION *******/
 
@@ -41,23 +41,28 @@ float temperature_coefficient = 0.06; // 1/Kelvin
 
 
 /*******  GLOBAL VARIABLES USED IN CODE *******/
-float battery_voltage, battery_temperature, battery_current, ambient_temperature;
-float soc_min, soc_max, soc, soc_limit, current_time_step; // in hours
-float f_strat, z_w, time_since_last_charge;
-float corrosion_temperature_0; // Corrosion reference temperature in K
-float n_bad_charges;
-float c_deg, c_corr, c_remaining;
-float current_factor, f_soc, f_plus, f_minus, f_acid;
+float soc_limit = 0.9;
 
-float current_vector_size = 240;
-int current_vector_pos = 0;
-float *current_vector;
+// Measurement Variables
+float battery_voltage, battery_temperature, battery_current, ambient_temperature, soc;
+float current_time_step = 0.25; // In Seconds
+float *current_vector; float current_vector_size = 240; int current_vector_pos = 0;
 int soc_status[2] = {0,0}; // Helps us determine changes in battery charge state
+
+// C_deg Variables
+float c_deg, current_factor, f_soc, f_plus, f_minus, f_acid, soc_min, soc_max,
+		f_strat, z_w, time_since_last_charge, n_bad_charges;
+
+
+// C_corr Variables
+float corrosion_temperature_0 = 298; // Corrosion reference temperature in K
+float dw, dw_lim; // Initial value for corrosion layer growth
+float c_corr;
+
+// C_remaining Variables
+float c_remaining;
 float c_remaining_history[2] = {1.75,1.75};
 
-float dw, dw_lim; // Inicital value for corrosion layer growth
-
-// TODO: Organize global variables by section (deg, corr, etc)
 // TODO: Review function calls and eliminate unecessary parameters
 // TODO: Review zero-current policy
 
