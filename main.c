@@ -355,7 +355,7 @@ int main() {
 			min_timeCount = 0;
 
 			global_day_timeCount += 1;
-			fprintf(output_file, "%ld %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %f\n", global_day_timeCount, battery_voltage, battery_current, soc, battery_temperature, ambient_temperature, n_bad_charges, f_acid, z_w, c_deg, c_corr, c_remaining);
+			fprintf(output_file, "%ld %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n", global_day_timeCount, battery_voltage, battery_current, soc, battery_temperature, ambient_temperature, n_bad_charges, f_acid, z_w, c_deg, c_corr, c_remaining);
 		} 
 
 		if (day_timeCount >= 7) { // 1 week
