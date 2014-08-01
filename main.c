@@ -2,9 +2,7 @@
 	Each function that implements an equation taken from those papers is
 	referenced for easier understanding. */
 
-#include "Timer.h"
-#include <SPI.h>
-#include <SD.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
@@ -59,14 +57,9 @@ float c_remaining_history[2] = {1.75,1.75};
 
 float dw, dw_lim; // Inicital value for corrosion layer growth
 
-const int chipSelect = 53;
-
 // TODO: Organize global variables by section (deg, corr, etc)
 // TODO: Review function calls and eliminate unecessary parameters
 // TODO: Review zero-current policy
-
-Timer t;
-File dataFile;
 
 float integrate(float *y, float time_step, int sample_size) {
 	// Integrates using 3/8 Simpson method
@@ -90,42 +83,6 @@ float integrate(float *y, float time_step, int sample_size) {
 	sum = sum + y[i];
 	sum = sum * (3*time_step/8);
 	return sum;
-}
-
-float measure_battery_current() {
-	float aggregate_data[100], data_sum = 0, current_constant = 0.064, current_offset = 2.5075;
-	int i;
-	for (i=0;i<100;i++) {
-		aggregate_data[i] = analogRead(A3);
-		data_sum += aggregate_data[i];
-	}
-	float current_value = data_sum/100;
-	
-	current_value = (current_offset - current_value * (5.00 / 1023.00))/current_constant;
-	return current_value;
-}
-
-float measure_battery_voltage() {
-	float aggregate_data[100], data_sum = 0, voltage_constant = 2.97;
-	int i;
-	for (i=0;i<100;i++) {
-		aggregate_data[i] = analogRead(A0);
-		data_sum += aggregate_data[i];
-	}
-	float voltage_value = data_sum/100;
-	return (voltage_value * (5.00 / 1023.00)) * voltage_constant;
-}
-
-float measure_ambient_temperature() {
-	float reading = analogRead(A1);
-	reading = (5.0 * reading * 100.0)/1024.0;
-	return reading;
-}
-
-float measure_battery_temperature() {
-	float reading = analogRead(A2);
-	reading = (5.0 * reading * 100.0)/1024.0;
-	return reading;
 }
 
 /* Schiffer et al. (2007) / Section 3.2 / Equation #6 */
@@ -192,7 +149,6 @@ void calculate_soc(float *current_values, float current_time_step, int sample_si
 			if (soc < soc_min) soc_min = soc;
 		}
 	}
-	log_data();
 }
 
 /* Dufo-López et al. (2014) / Section 4.3.1.1 / Equation #11 */
@@ -321,65 +277,36 @@ void calculate_c_corr() {
 	c_corr = (0.2 * dw/dw_lim);
 }
 
-void calculate_remaining_lifetime() {
+float calculate_remaining_lifetime(float time_elapsed) { // time_elapsed in hours
 	/* TODO: Improve this remaining lifetime algorythm. So far, it assumes
 	   a linear decrease in c_remaining. Maybe project usage patterns? */
 
-	float slope = (c_remaining_history[1] - c_remaining_history[0])/ corrosion_time_step;
+	float slope = (c_remaining_history[1] - c_remaining_history[0])/ time_elapsed;
 
-	float remaining_lifetime = (0.8 - 1.75) / (slope * 24 *365);
-	printf("%.2f\n",remaining_lifetime);
+	float remaining_lifetime = (0.8 - c_remaining) / (slope * 24 *365);
+	return remaining_lifetime;
 }
 
 /* Schiffer et al. (2007) / Section 3.5 / Equation #30 */
-void calculate_c_remaining(void *context) {
+void calculate_c_remaining() {
 	calculate_c_corr(); calculate_c_deg();
 	c_remaining =  1.75 -  c_corr - c_deg;
-
-	// This is used for remaining lifetime prediction
-	c_remaining_history[0] = c_remaining_history[1];
-	c_remaining_history[1] = c_remaining;
-	calculate_remaining_lifetime();
 }
 
-void take_measurements(void *context) {
-	battery_voltage = measure_battery_voltage();
-	battery_temperature = measure_battery_temperature();
-	ambient_temperature = measure_ambient_temperature();
-	battery_current = measure_battery_current();
 
-	if (current_vector_pos == current_vector_size) {
-		calculate_soc(current_vector, current_time_step, current_vector_size);
-		current_vector_pos = 0;
-	}
-	else {
-		current_vector[current_vector_pos] = battery_current;
-		current_vector_pos++;
-	}
-	
-	Serial.println("TAKING MEASUREMENTS");
-	Serial.println(battery_voltage);
-	Serial.println(battery_current);
-	Serial.println(battery_temperature);
-	Serial.println(ambient_temperature);
-	Serial.println(soc);
-}
-		
-/* TODO: DEVELOP INITIAL SOC MEASUREMENT */
-/* TODO: GATHER DATA BEFORE RESET FROM TEXT FILE */
-void initial_setup() {
-	delay(5000);
-	battery_voltage = measure_battery_voltage();
-	battery_temperature = measure_battery_temperature();
-	ambient_temperature = measure_ambient_temperature();
-	battery_current = measure_battery_current();
-	n_bad_charges = 0;
+
+// TODO: IMPLEMENT CUSTOM TIME STEPS
+int main() {
+	corrosion_time_step = 0.016667; // [hours]
+	degradation_time_step = 0.016667; // [hours]
+
+
+	FILE *data_file = fopen("/Users/capanema/Desktop/data.txt", "r");
+	FILE *output_file = fopen("/Users/capanema/Desktop/output.txt", "w+");
 
 	soc_min = 1; soc_max = 0; soc_limit = 0.9; current_time_step = 0.25;
 	f_strat = 0; z_w = 0; time_since_last_charge = 0;
 	corrosion_temperature_0 = 298;
-	corrosion_time_step = 0.016667; // [hours]
-	degradation_time_step = 0.016667; // [hours]
 
 
 	current_vector = (float *)malloc(current_vector_size * sizeof(float));
@@ -387,95 +314,54 @@ void initial_setup() {
 	/* Bindner et al. (2005) / Section 5.3.7.2 / Equation #32 */
 	dw_lim = float_lifetime * calculate_k_s(nominal_cell_voltage);
 
-	// TODO: Gather previous data from SD card
-	/*
-	long dataPos = dataFile.position();
-	dataFile.seek(dataPos-83);
-	fscanf(dataFile, " %f,  %f,  %f,  %f,  %f, %d,  %f,  %f,  %f,  %f,  %f", &battery_voltage, &battery_current, &soc, &battery_temperature, &ambient_temperature, &n_bad_charges, &f_acid, &z_w, &c_deg, &c_corr, &c_remaining);
-	char buffer[11]; int buffer_pos = 0;
-	char read_byte; float value;
-	while ((read_byte = dataFile.read() > 0)) {
-		if (read_byte != ',' || read_byte != ' ') {
-			buffer[buffer_pos] = read_byte;
+	
+	char line_buffer[256];
+	int min_timeCount = 0; // minutes
+	double sec_timeCount = 0; // seconds
+	int day_timeCount = 0;
+	long global_day_timeCount = 0;
+
+	if (data_file == NULL) {
+		printf("ERROR: Unable to open file\n");
+		return 0;
+	}
+
+	printf("Estimate initial SOC: ");
+	scanf("%f", &soc);
+
+	while (fscanf(data_file, "%f %f %f %f", &battery_voltage, &battery_current, &battery_temperature, &ambient_temperature) != -1) {
+		// Trying to remove offset
+		battery_current -= 0.02;
+		if (fabs(battery_current) < 0.1) battery_current = 0;
+		
+		if (current_vector_pos == current_vector_size) { // 1 minute
+				calculate_soc(current_vector, current_time_step, current_vector_size);
+				current_vector_pos = 0;
+				calculate_c_remaining();
+				min_timeCount++;
+			}
+		else {
+			current_vector[current_vector_pos] = battery_current;
+			current_vector_pos++;
 		}
-		if (read_byte == ',') {
-			value = atof(buffer);
-			buffer_pos = 0;
+
+		if (min_timeCount == 1440) { // 1 day
+			day_timeCount += 1;
+			min_timeCount = 0;
+
+			global_day_timeCount += 1;
+			fprintf(output_file, "%ld %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f %f\n", global_day_timeCount, battery_voltage, battery_current, soc, battery_temperature, ambient_temperature, n_bad_charges, f_acid, z_w, c_deg, c_corr, c_remaining);
+		} 
+
+		if (day_timeCount >= 7) { // 1 week
+			c_remaining_history[0] = c_remaining_history[1];
+			c_remaining_history[1] = c_remaining;
+			printf("Remaining Lifetime: %f\n", calculate_remaining_lifetime(day_timeCount*24));
+			day_timeCount = 0;
 		}
-
+		sec_timeCount += 0.25;
 	}
 
-	dataFile.println("");*/
-	
-
-	// Equation obtained from linear regression from data relating Voltage and SOC
-	soc = 0.6839*battery_voltage - 7.9077;
-	if (soc > 1) soc = 1;
-}
-
-
-void setup() {
-	Serial.begin(9600);
-
-	// BEGIN Initializing SD Card
-	while (!Serial);
-	Serial.print("Initializing SD card...");
-	pinMode(SS, OUTPUT);
-
-	if (!SD.begin(chipSelect)) {
-		Serial.println("Card failed, or not present");
-		while (1) ;
-	}
-	Serial.println("card initialized.");
-
-	dataFile = SD.open("datalog.txt", FILE_WRITE);
-	if (! dataFile) {
-		Serial.println("error opening datalog.txt");
-		while (1) ;
-	}
-	// END Initializing SD Card
-
-	initial_setup();
-
-	int measurement_tick = t.every(current_time_step*1000, take_measurements, 0);
-	int c_remaining_tick = t.every(corrosion_time_step*1000*3600, calculate_c_remaining, 0);
-}
-
-void log_data() {
-	Serial.println("Logging Data");
-	char buffer[11];
-	String dataString = "";
-	
-	dataString += dtostrf(battery_voltage, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(battery_current, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(soc, 7, 3, buffer);
-	dataString += String(',');	
-	dataString += dtostrf(battery_temperature, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(ambient_temperature, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(n_bad_charges, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(f_acid, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(z_w, 7, 3, buffer);	
-	dataString += String(',');
-	dataString += dtostrf(c_deg, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(c_corr, 7, 3, buffer);
-	dataString += String(',');
-	dataString += dtostrf(c_remaining, 7, 3, buffer);
-
-	
-	dataFile.println(dataString);
-	Serial.println(dataString);
-
-	dataFile.flush();
-
-}
-
-void loop() {
-	t.update();
+	fclose(data_file);
+	fclose(output_file);
 }
