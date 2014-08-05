@@ -306,8 +306,8 @@ int main() {
 	degradation_time_step = 0.016667; // [hours]
 
 
-	FILE *data_file = fopen("/Users/capanema/Desktop/data.txt", "r");
-	FILE *output_file = fopen("/Users/capanema/Desktop/output.txt", "w+");
+	FILE *data_file = fopen("./data.txt", "r");
+	FILE *output_file = fopen("./output.txt", "w+");
 
 	soc_min = 1; soc_max = 0; soc_limit = 0.9; current_time_step = 0.25;
 	f_strat = 0; z_w = 0; time_since_last_charge = 0;
