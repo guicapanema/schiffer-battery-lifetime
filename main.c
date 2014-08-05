@@ -104,7 +104,7 @@ float calculate_i_gas(float battery_voltage, float battery_temperature) {
 /* Dufo-López et al. (2014) / Section 4.3.1.1 / Equation #13 */
 void calculate_n_bad_charges() {
 	n_bad_charges += (0.0025 - pow((0.95 - soc_max),2))/0.0025;
-	if (soc > 0.9999) n_bad_charges = 0;
+	if (soc_max > 0.9999) n_bad_charges = 0;
 }
 
 /* Dufo-López et al. (2014) / Section 4.3.1.1 / Equation #12 */
